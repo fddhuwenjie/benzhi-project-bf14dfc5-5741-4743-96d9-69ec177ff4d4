@@ -128,6 +128,47 @@ func (r *MemoryRepo) commit(i *PreservationIncident, expected int, rec RequestRe
 	return nil
 }
 
+// CommitFailure persists audit-side state changes (such as rejection audit
+// events) produced by a request that ultimately failed domain validation,
+// without bumping the aggregate revision. The request record is marked as a
+// failure so retries replay the stored error instead of being turned into a
+// successful idempotent result.
+func (r *MemoryRepo) CommitFailure(i *PreservationIncident, expected int, rec RequestRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if rec.RequestID != "" {
+		if _, exists := r.batchRequests[rec.RequestID]; exists {
+			return &IdempotencyConflictError{}
+		}
+	}
+	if rec.RequestID != "" {
+		if old, ok := r.requests[rec.RequestID]; ok {
+			if old.Operation == rec.Operation && old.IncidentID == rec.IncidentID && old.Digest == rec.Digest {
+				return nil
+			}
+			cur := r.incidents[old.IncidentID]
+			err := &IdempotencyConflictError{IncidentID: old.IncidentID}
+			if cur != nil {
+				err.Status, err.Revision = cur.Status, cur.Revision
+			}
+			return err
+		}
+	}
+	cur, ok := r.incidents[i.ID]
+	if ok && cur.Revision != expected {
+		return ErrConflict
+	}
+	if !ok && expected != 0 {
+		return ErrConflict
+	}
+	r.incidents[i.ID] = cloneIncident(i)
+	if rec.RequestID != "" {
+		rec.Result = cloneIncident(rec.Result)
+		r.requests[rec.RequestID] = rec
+	}
+	return nil
+}
+
 func (r *MemoryRepo) Get(id string) (*PreservationIncident, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -240,7 +240,7 @@ func (s *Service) ConfirmManualReview(id string, rev int, approve bool, actor, r
 	}
 	if err = in.ConfirmManualReview(rev, approve, actor, req, s.now()); err != nil {
 		if !approve && len(in.Timeline) > 0 {
-			_, _ = s.commit(in, rev, req, "manual-review", digest)
+			_, _ = s.commitFailure(in, rev, req, "manual-review", digest, err)
 		}
 		return nil, err
 	}
@@ -571,6 +571,9 @@ func (s *Service) reuse(requestID, operation, incidentID, digest string) (*domai
 		return nil, false, nil
 	}
 	if rec.Operation == operation && rec.IncidentID == incidentID && rec.Digest == digest {
+		if rec.Failure {
+			return nil, true, domain.DecodeRecordedError(rec.FailureError)
+		}
 		if rec.Result != nil {
 			return rec.Result, true, nil
 		}
@@ -588,6 +591,22 @@ func (s *Service) reuse(requestID, operation, incidentID, digest string) (*domai
 func (s *Service) commit(in *domain.PreservationIncident, expected int, requestID, operation, digest string) (*domain.PreservationIncident, error) {
 	rec := domain.RequestRecord{RequestID: requestID, Operation: operation, IncidentID: in.ID, Digest: digest, SuccessRevision: in.Revision, Result: in}
 	if err := s.Repo.Commit(in, expected, rec); err != nil {
+		return nil, err
+	}
+	stored, _ := s.Repo.FindRequest(requestID)
+	return stored.Result, nil
+}
+
+// commitFailure persists audit-side state changes (such as rejection audit
+// events) produced by a failed request without advancing the aggregate
+// revision, and records the failure so retries replay the same error.
+func (s *Service) commitFailure(in *domain.PreservationIncident, expected int, requestID, operation, digest string, cause error) (*domain.PreservationIncident, error) {
+	rec := domain.RequestRecord{
+		RequestID: requestID, Operation: operation, IncidentID: in.ID, Digest: digest,
+		SuccessRevision: in.Revision, Result: in,
+		Failure: true, FailureError: domain.EncodeValidationError(cause),
+	}
+	if err := s.Repo.CommitFailure(in, expected, rec); err != nil {
 		return nil, err
 	}
 	stored, _ := s.Repo.FindRequest(requestID)

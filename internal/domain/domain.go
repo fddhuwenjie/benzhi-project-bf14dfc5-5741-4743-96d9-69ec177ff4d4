@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -105,6 +106,49 @@ type IdempotencyConflictError struct {
 func (e *IdempotencyConflictError) Error() string { return ErrIdempotency.Error() }
 func (e *IdempotencyConflictError) Unwrap() error { return ErrIdempotency }
 
+// RecordedFailureError wraps a serialised domain error produced by a
+// previously recorded failed request (for example a rejected manual review).
+// It lets the idempotency layer replay the same rejection on retries without
+// creating new audit events or changing the revision, while preserving
+// errors.As/errors.Is compatibility with the original error type.
+type RecordedFailureError struct {
+	OriginalError string
+}
+
+func (e *RecordedFailureError) Error() string { return e.OriginalError }
+func (e *RecordedFailureError) Unwrap() error { return ErrInvalid }
+
+// EncodeValidationError serialises a validation error so it can be stored in
+// a request record and later replayed by DecodeRecordedError.
+func EncodeValidationError(err error) string {
+	var ve *ValidationError
+	if errors.As(err, &ve) {
+		b, _ := json.Marshal(struct {
+			Type     string   `json:"type"`
+			Field    string   `json:"field"`
+			Message  string   `json:"message"`
+			Missing  []string `json:"missing,omitempty"`
+		}{"validation", ve.Field, ve.Message, ve.MissingMetrics})
+		return string(b)
+	}
+	return err.Error()
+}
+
+// DecodeRecordedError rebuilds the most specific domain error from a stored
+// serialisation produced by EncodeValidationError.
+func DecodeRecordedError(stored string) error {
+	var payload struct {
+		Type    string   `json:"type"`
+		Field   string   `json:"field"`
+		Message string   `json:"message"`
+		Missing []string  `json:"missing"`
+	}
+	if json.Unmarshal([]byte(stored), &payload) == nil && payload.Type == "validation" {
+		return &ValidationError{Field: payload.Field, Message: payload.Message, MissingMetrics: payload.Missing}
+	}
+	return &RecordedFailureError{OriginalError: stored}
+}
+
 type IncidentFilter struct {
 	Status          Status    `json:"status,omitempty"`
 	AreaID          string    `json:"area_id,omitempty"`
@@ -124,11 +168,14 @@ type RequestRecord struct {
 	Digest          string                `json:"digest"`
 	SuccessRevision int                   `json:"success_revision"`
 	Result          *PreservationIncident `json:"result,omitempty"`
+	Failure         bool                  `json:"failure,omitempty"`
+	FailureError    string                `json:"failure_error,omitempty"`
 }
 
 type Repository interface {
 	Save(*PreservationIncident, int) error
 	Commit(*PreservationIncident, int, RequestRecord) error
+	CommitFailure(*PreservationIncident, int, RequestRecord) error
 	Get(string) (*PreservationIncident, error)
 	List(IncidentFilter) []*PreservationIncident
 	FindRequest(string) (RequestRecord, bool)

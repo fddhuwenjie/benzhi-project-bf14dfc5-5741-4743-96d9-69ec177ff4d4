@@ -112,11 +112,30 @@ func (s *Store) Commit(in *domain.PreservationIncident, expected int, rec domain
 	return s.commit(in, expected, rec)
 }
 
+func (s *Store) CommitFailure(in *domain.PreservationIncident, expected int, rec domain.RequestRecord) error {
+	return s.commitFailure(in, expected, rec)
+}
+
 func (s *Store) commit(in *domain.PreservationIncident, expected int, rec domain.RequestRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	oldIncidents, oldRequests := s.MemoryRepo.Snapshot()
 	if err := s.MemoryRepo.Commit(in, expected, rec); err != nil {
+		return err
+	}
+	incidents, requests := s.MemoryRepo.Snapshot()
+	if err := s.persist(incidents, requests); err != nil {
+		s.MemoryRepo.ReplaceSnapshot(oldIncidents, oldRequests)
+		return err
+	}
+	return nil
+}
+
+func (s *Store) commitFailure(in *domain.PreservationIncident, expected int, rec domain.RequestRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	oldIncidents, oldRequests := s.MemoryRepo.Snapshot()
+	if err := s.MemoryRepo.CommitFailure(in, expected, rec); err != nil {
 		return err
 	}
 	incidents, requests := s.MemoryRepo.Snapshot()
