@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
 
 type Store struct {
@@ -66,13 +67,21 @@ func Open(dir string) (*Store, error) {
 	s := &Store{MemoryRepo: domain.NewMemoryRepo(), dir: dir}
 	b, err := os.ReadFile(filepath.Join(dir, "snapshot.json"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			if _, logErr := os.Stat(filepath.Join(dir, "events.jsonl")); logErr == nil {
-				return nil, &domain.IntegrityError{Message: "快照缺失，无法恢复事件日志"}
-			}
-			return s, nil
+		if !os.IsNotExist(err) {
+			return nil, err
 		}
-		return nil, err
+		// snapshot.json 缺失时，尝试从 events.jsonl 重建事件时间线与聚合提交点，
+		// 使进程崩溃或磁盘故障丢失快照后仍能恢复已提交的事件日志。
+		events, replayErr := readEvents(filepath.Join(dir, "events.jsonl"))
+		if replayErr != nil {
+			if os.IsNotExist(replayErr) {
+				return s, nil
+			}
+			return nil, replayErr
+		}
+		incidents, requests := replayEvents(events)
+		s.MemoryRepo.ReplaceSnapshot(incidents, requests)
+		return s, nil
 	}
 	var state diskSnapshot
 	if err = json.Unmarshal(b, &state); err != nil {
@@ -84,6 +93,69 @@ func Open(dir string) (*Store, error) {
 	s.MemoryRepo.ReplaceSnapshot(state.Incidents, state.Requests)
 	s.MemoryRepo.ReplaceBatchSnapshot(state.BatchRequests)
 	return s, nil
+}
+
+// readEvents 读取 events.jsonl 中的全部事件记录。
+func readEvents(path string) ([]domain.IncidentEvent, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var events []domain.IncidentEvent
+	decoder := json.NewDecoder(file)
+	for {
+		var event domain.IncidentEvent
+		if err = decoder.Decode(&event); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, &domain.IntegrityError{Message: "事件日志格式损坏: " + err.Error()}
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+// replayEvents 从事件日志重建聚合与幂等索引。事件日志保留了完整的
+// 时间线，可恢复事件编号、修订号、状态和处置轮次；读数、计划等
+// 仅存在于快照的字段无法从日志重建，留空以保证聚合可访问。
+func replayEvents(events []domain.IncidentEvent) ([]*domain.PreservationIncident, []domain.RequestRecord) {
+	byIncident := map[string][]domain.IncidentEvent{}
+	for _, event := range events {
+		byIncident[event.IncidentID] = append(byIncident[event.IncidentID], event)
+	}
+	incidents := make([]*domain.PreservationIncident, 0, len(byIncident))
+	for id, timeline := range byIncident {
+		sort.Slice(timeline, func(a, b int) bool { return timeline[a].Sequence < timeline[b].Sequence })
+		last := timeline[len(timeline)-1]
+		in := &domain.PreservationIncident{ID: id, Status: last.StatusAfter, Revision: last.RevisionAfter, CurrentRound: last.Round, Timeline: append([]domain.IncidentEvent(nil), timeline...)}
+		if in.CurrentRound < 0 {
+			in.CurrentRound = 0
+		}
+		if len(timeline) > 0 {
+			in.CreatedAt = timeline[0].OccurredAt
+			in.UpdatedAt = last.OccurredAt
+		}
+		if in.UpdatedAt.IsZero() {
+			in.UpdatedAt = time.Now().UTC()
+		}
+		incidents = append(incidents, in)
+	}
+	sort.Slice(incidents, func(a, b int) bool { return incidents[a].ID < incidents[b].ID })
+	// 幂等索引中的 RequestID 可从事件日志提取，但 Digest 与 Operation 仅存在于快照，
+	// 无法恢复完整幂等记录；记录已知 RequestID 以保留索引可见性。
+	seen := map[string]bool{}
+	var requests []domain.RequestRecord
+	for _, event := range events {
+		if event.RequestID == "" || seen[event.RequestID] {
+			continue
+		}
+		seen[event.RequestID] = true
+		requests = append(requests, domain.RequestRecord{RequestID: event.RequestID, IncidentID: event.IncidentID, SuccessRevision: event.RevisionAfter})
+	}
+	sort.Slice(requests, func(a, b int) bool { return requests[a].RequestID < requests[b].RequestID })
+	return incidents, requests
 }
 
 func (s *Store) CommitBatch(incidents []*domain.PreservationIncident, expected map[string]int, rec domain.BatchRequestRecord) error {
