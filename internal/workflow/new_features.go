@@ -183,6 +183,7 @@ func (s *Service) SignHandover(snap domain.HandoverSnapshot, requestID, from, to
 			return domain.HandoverSnapshot{}, err
 		}
 	}
+	s.invalidateListCache()
 	return snap, nil
 }
 

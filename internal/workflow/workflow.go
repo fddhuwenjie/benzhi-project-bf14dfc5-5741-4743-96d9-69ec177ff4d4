@@ -155,6 +155,7 @@ func (s *Service) Create(c CreateCommand) (*domain.PreservationIncident, error) 
 	if err = s.Repo.Commit(in, 0, rec); err != nil {
 		return nil, err
 	}
+	s.invalidateListCache()
 	stored, _ := s.Repo.FindRequest(c.RequestID)
 	return stored.Result, nil
 }
@@ -563,6 +564,12 @@ func (s *Service) storeListProjection(key string, incidents []*domain.Preservati
 	s.listCache[key] = payload
 }
 
+func (s *Service) invalidateListCache() {
+	s.listCacheMu.Lock()
+	defer s.listCacheMu.Unlock()
+	s.listCache = make(map[string][]byte)
+}
+
 func filterDeadlineBucket(items []*domain.PreservationIncident, bucket string, now time.Time) []*domain.PreservationIncident {
 	if bucket == "" {
 		return items
@@ -627,6 +634,7 @@ func (s *Service) commit(in *domain.PreservationIncident, expected int, requestI
 	if err := s.Repo.Commit(in, expected, rec); err != nil {
 		return nil, err
 	}
+	s.invalidateListCache()
 	stored, _ := s.Repo.FindRequest(requestID)
 	return stored.Result, nil
 }
