@@ -22,6 +22,7 @@ type Service struct {
 }
 
 type reviewEvidence struct {
+	Revision    int
 	Comparisons []domain.ReadingComparison
 	ReadingIDs  []string
 }

@@ -349,7 +349,7 @@ func (s *Service) ReviewPreflight(id string, revision int) (domain.ReviewLock, e
 	if in.Plan == nil || in.Plan.Progress < 1 {
 		return domain.ReviewLock{}, &domain.ValidationError{Field: "review_evidence", Message: "仍有未完成措施"}
 	}
-	if cached, ok := s.loadReviewEvidence(id); ok {
+	if cached, ok := s.loadReviewEvidence(id); ok && cached.Revision == revision {
 		return domain.ReviewLock{
 			Checksum:    domain.AssignmentCandidatesChecksum(id, revision, nil),
 			Revision:    revision,
@@ -371,7 +371,7 @@ func (s *Service) ReviewPreflight(id string, revision int) (domain.ReviewLock, e
 	checksum := domain.AssignmentCandidatesChecksum(id, revision, nil)
 	lock := domain.ReviewLock{Checksum: checksum, Revision: revision, Comparisons: comps, ReadingIDs: ids, LockedAt: s.now()}
 	if len(comps) >= 2 {
-		s.storeReviewEvidence(id, reviewEvidence{Comparisons: comps, ReadingIDs: ids})
+		s.storeReviewEvidence(id, reviewEvidence{Revision: revision, Comparisons: comps, ReadingIDs: ids})
 	}
 	return lock, nil
 }
