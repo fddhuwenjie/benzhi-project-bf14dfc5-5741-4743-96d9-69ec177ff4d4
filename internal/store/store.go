@@ -15,7 +15,7 @@ import (
 type Store struct {
 	*domain.MemoryRepo
 	dir             string
-	mu              sync.Mutex
+	mu              sync.RWMutex
 	auditMu         sync.Mutex
 	auditLog        []domain.IncidentEvent
 	auditCacheReady bool
@@ -24,6 +24,8 @@ type Store struct {
 const auditCacheThreshold = 128
 
 func (s *Store) AuditEvents(id string) ([]domain.IncidentEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	snapshotEvents, err := s.MemoryRepo.AuditEvents(id)
 	if err != nil {
 		return nil, err
@@ -150,6 +152,7 @@ func (s *Store) Commit(in *domain.PreservationIncident, expected int, rec domain
 func (s *Store) commit(in *domain.PreservationIncident, expected int, rec domain.RequestRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.invalidateAuditCache()
 	oldIncidents, oldRequests := s.MemoryRepo.Snapshot()
 	if err := s.MemoryRepo.Commit(in, expected, rec); err != nil {
 		return err
@@ -193,4 +196,11 @@ func (s *Store) persist(incidents []*domain.PreservationIncident, requests []dom
 		return err
 	}
 	return os.Rename(snapshotTmp, filepath.Join(s.dir, "snapshot.json"))
+}
+
+func (s *Store) invalidateAuditCache() {
+	s.auditMu.Lock()
+	defer s.auditMu.Unlock()
+	s.auditLog = nil
+	s.auditCacheReady = false
 }
