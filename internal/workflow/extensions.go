@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"museum-preservation/internal/assessment"
@@ -406,8 +407,13 @@ func (s *Service) GetTimeline(id string, filter TimelineFilter) (*domain.Preserv
 	if err != nil {
 		return nil, err
 	}
-	in.RefreshRetestSummary(s.now())
-	all := in.Timeline
+	// timelineSource may hand back a shared, cached incident snapshot when an
+	// event reaches the caching threshold. Each filtered request must compute
+	// from the complete, mutually isolated view, so the previous response's
+	// trimming cannot leak into subsequent requests. Clone before mutating.
+	result := cloneIncidentSnapshot(in)
+	result.RefreshRetestSummary(s.now())
+	all := result.Timeline
 	matched := make([]domain.IncidentEvent, 0)
 	for _, event := range all {
 		if filter.EventType != "" && event.EventType != filter.EventType || filter.Actor != "" && event.Actor != filter.Actor || filter.Round > 0 && event.Round != filter.Round {
@@ -433,9 +439,27 @@ func (s *Service) GetTimeline(id string, filter TimelineFilter) (*domain.Preserv
 	if matched == nil {
 		matched = []domain.IncidentEvent{}
 	}
-	in.Timeline = matched
-	in.TimelinePage = &domain.TimelinePage{Events: matched, NextCursor: next, Total: total}
-	return in, nil
+	result.Timeline = matched
+	result.TimelinePage = &domain.TimelinePage{Events: matched, NextCursor: next, Total: total}
+	return result, nil
+}
+
+// cloneIncidentSnapshot returns a deep copy of the incident so callers can
+// mutate fields (timeline, retest summary, etc.) without affecting the shared
+// timeline cache or any other concurrent request view.
+func cloneIncidentSnapshot(in *domain.PreservationIncident) *domain.PreservationIncident {
+	if in == nil {
+		return nil
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		// Fall back to a shallow copy; the cached snapshot stays untouched.
+		cp := *in
+		return &cp
+	}
+	var cp domain.PreservationIncident
+	_ = json.Unmarshal(b, &cp)
+	return &cp
 }
 
 func ParseTimelineCursor(value string) (int, error) {
