@@ -286,10 +286,22 @@ func (s *Service) AssignBatch(command BatchAssignmentCommand) (BatchAssignmentRe
 			return BatchAssignmentResult{}, &domain.IdempotencyConflictError{}
 		}
 		result := BatchAssignmentResult{BatchID: old.BatchID}
-		for _, in := range old.Results {
+		incidents := old.Results
+		if len(incidents) == 0 && len(old.IncidentIDs) > 0 {
+			incidents = make([]*domain.PreservationIncident, 0, len(old.IncidentIDs))
+			for _, id := range old.IncidentIDs {
+				in, err := s.Repo.Get(id)
+				if err != nil {
+					return BatchAssignmentResult{}, err
+				}
+				incidents = append(incidents, in)
+			}
+		}
+		for _, in := range incidents {
 			result.Incidents = append(result.Incidents, in)
 			result.Results = append(result.Results, domain.BatchIncidentResult{IncidentID: in.ID, Valid: true, Status: in.Status, Revision: in.Revision})
 		}
+		sort.Slice(result.Results, func(a, b int) bool { return result.Results[a].IncidentID < result.Results[b].IncidentID })
 		return result, nil
 	}
 	preflight := s.PreflightBatchAssignment(command)
