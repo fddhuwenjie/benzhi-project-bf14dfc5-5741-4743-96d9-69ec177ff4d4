@@ -652,7 +652,18 @@ func (a *API) batchAssignment(w http.ResponseWriter, r *http.Request) {
 func decodeJSON(r *http.Request, value interface{}) error {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(value)
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	// Reject a second JSON value or any trailing non-whitespace token so that
+	// the request body contains exactly one JSON value (trailing whitespace is
+	// allowed). Without this check the decoder silently ignores extra content
+	// after the first value, allowing persistence of a partial request.
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("请求体只能包含单个 JSON 值")
+	}
+	return nil
 }
 
 func decodeRawItems(raw json.RawMessage, value interface{}) error {
