@@ -155,6 +155,11 @@ func (r *MemoryRepo) List(f IncidentFilter) []*PreservationIncident {
 		}
 		if compactProjection {
 			projection := *i
+			// RefreshRetestSummary 在读取路径中按时效刷新检查点状态，
+			// 此处必须切断与仓储聚合共享的切片底层数组，避免读取改写持久化状态。
+			if len(i.RetestCheckpoints) > 0 {
+				projection.RetestCheckpoints = append([]RetestCheckpoint(nil), i.RetestCheckpoints...)
+			}
 			out = append(out, &projection)
 			continue
 		}
