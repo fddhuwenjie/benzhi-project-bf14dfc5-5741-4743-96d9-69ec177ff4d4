@@ -9,13 +9,16 @@ import (
 	"museum-preservation/internal/domain"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Service struct {
-	Repo  domain.Repository
-	Rules assessment.RuleSet
-	Now   func() time.Time
+	Repo        domain.Repository
+	Rules       assessment.RuleSet
+	Now         func() time.Time
+	listCacheMu sync.RWMutex
+	listCache   map[string][]byte
 }
 
 type auditRepository interface {
@@ -476,8 +479,15 @@ func (s *Service) Get(id string) (*domain.PreservationIncident, error) {
 }
 
 func (s *Service) List(filter domain.IncidentFilter) ListResult {
+	cacheKey := requestDigest(filter)
+	items, cached := s.loadListProjection(cacheKey)
+	if !cached {
+		items = s.Repo.List(filter)
+		if len(items) >= 64 {
+			s.storeListProjection(cacheKey, items)
+		}
+	}
 	now := s.now()
-	items := s.Repo.List(filter)
 	items = filterDeadlineBucket(items, filter.DeadlineBucket, now)
 	stats := IncidentStatistics{
 		ByStatus:    map[domain.Status]int{domain.StatusPending: 0, domain.StatusMitigating: 0, domain.StatusReview: 0, domain.StatusClosed: 0},
@@ -524,6 +534,33 @@ func (s *Service) List(filter domain.IncidentFilter) ListResult {
 	stats.RiskDimensions = dimensionStatistics(items, "risk", []string{string(domain.RiskCritical), string(domain.RiskHigh), string(domain.RiskMedium), string(domain.RiskLow)}, now)
 	sortIncidents(items, now)
 	return ListResult{Incidents: items, Statistics: stats}
+}
+
+func (s *Service) loadListProjection(key string) ([]*domain.PreservationIncident, bool) {
+	s.listCacheMu.RLock()
+	payload, ok := s.listCache[key]
+	s.listCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	var incidents []*domain.PreservationIncident
+	if json.Unmarshal(payload, &incidents) != nil {
+		return nil, false
+	}
+	return incidents, true
+}
+
+func (s *Service) storeListProjection(key string, incidents []*domain.PreservationIncident) {
+	payload, err := json.Marshal(incidents)
+	if err != nil {
+		return
+	}
+	s.listCacheMu.Lock()
+	defer s.listCacheMu.Unlock()
+	if s.listCache == nil {
+		s.listCache = make(map[string][]byte)
+	}
+	s.listCache[key] = payload
 }
 
 func filterDeadlineBucket(items []*domain.PreservationIncident, bucket string, now time.Time) []*domain.PreservationIncident {
