@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 	"museum-preservation/internal/assessment"
 	"museum-preservation/internal/domain"
@@ -277,6 +278,13 @@ func validateBatchDeadline(in *domain.PreservationIncident, command BatchAssignm
 }
 
 func (s *Service) AssignBatch(command BatchAssignmentCommand) (BatchAssignmentResult, error) {
+	return s.AssignBatchContext(context.Background(), command)
+}
+
+func (s *Service) AssignBatchContext(ctx context.Context, command BatchAssignmentCommand) (BatchAssignmentResult, error) {
+	if err := ctx.Err(); err != nil {
+		return BatchAssignmentResult{}, err
+	}
 	if err := requireRequestID(command.RequestID); err != nil {
 		return BatchAssignmentResult{}, err
 	}

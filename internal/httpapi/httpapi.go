@@ -641,7 +641,7 @@ func (a *API) batchAssignment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, a.Svc.PreflightBatchAssignment(command), http.StatusOK)
 		return
 	}
-	result, err := a.Svc.AssignBatch(command)
+	result, err := a.Svc.AssignBatchContext(r.Context(), command)
 	if err != nil {
 		a.writeErr(w, "", err)
 		return
