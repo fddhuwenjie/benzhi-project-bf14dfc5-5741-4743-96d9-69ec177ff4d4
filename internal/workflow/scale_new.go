@@ -349,6 +349,15 @@ func (s *Service) ReviewPreflight(id string, revision int) (domain.ReviewLock, e
 	if in.Plan == nil || in.Plan.Progress < 1 {
 		return domain.ReviewLock{}, &domain.ValidationError{Field: "review_evidence", Message: "仍有未完成措施"}
 	}
+	if cached, ok := s.loadReviewEvidence(id); ok {
+		return domain.ReviewLock{
+			Checksum:    domain.AssignmentCandidatesChecksum(id, revision, nil),
+			Revision:    revision,
+			Comparisons: cached.Comparisons,
+			ReadingIDs:  cached.ReadingIDs,
+			LockedAt:    s.now(),
+		}, nil
+	}
 	comps := assessment.Compare(in.Readings, lockedRules(in, s.Rules))
 	ids := []string{}
 	for _, c := range comps {
@@ -360,7 +369,31 @@ func (s *Service) ReviewPreflight(id string, revision int) (domain.ReviewLock, e
 		return domain.ReviewLock{}, &domain.ValidationError{Field: "review_evidence", Message: "每个异常指标都必须有有效效果读数"}
 	}
 	checksum := domain.AssignmentCandidatesChecksum(id, revision, nil)
-	return domain.ReviewLock{Checksum: checksum, Revision: revision, Comparisons: comps, ReadingIDs: ids, LockedAt: s.now()}, nil
+	lock := domain.ReviewLock{Checksum: checksum, Revision: revision, Comparisons: comps, ReadingIDs: ids, LockedAt: s.now()}
+	if len(comps) >= 2 {
+		s.storeReviewEvidence(id, reviewEvidence{Comparisons: comps, ReadingIDs: ids})
+	}
+	return lock, nil
+}
+
+func (s *Service) loadReviewEvidence(id string) (reviewEvidence, bool) {
+	s.reviewEvidenceMu.Lock()
+	defer s.reviewEvidenceMu.Unlock()
+	cached, ok := s.reviewEvidenceCache[id]
+	cached.Comparisons = append([]domain.ReadingComparison(nil), cached.Comparisons...)
+	cached.ReadingIDs = append([]string(nil), cached.ReadingIDs...)
+	return cached, ok
+}
+
+func (s *Service) storeReviewEvidence(id string, evidence reviewEvidence) {
+	s.reviewEvidenceMu.Lock()
+	defer s.reviewEvidenceMu.Unlock()
+	if s.reviewEvidenceCache == nil {
+		s.reviewEvidenceCache = make(map[string]reviewEvidence)
+	}
+	evidence.Comparisons = append([]domain.ReadingComparison(nil), evidence.Comparisons...)
+	evidence.ReadingIDs = append([]string(nil), evidence.ReadingIDs...)
+	s.reviewEvidenceCache[id] = evidence
 }
 
 func (s *Service) SetReviewPreflight(id string, revision int) (*domain.PreservationIncident, error) {

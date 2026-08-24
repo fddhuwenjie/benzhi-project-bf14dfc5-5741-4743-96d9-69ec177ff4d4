@@ -9,13 +9,21 @@ import (
 	"museum-preservation/internal/domain"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Service struct {
-	Repo  domain.Repository
-	Rules assessment.RuleSet
-	Now   func() time.Time
+	Repo                domain.Repository
+	Rules               assessment.RuleSet
+	Now                 func() time.Time
+	reviewEvidenceMu    sync.Mutex
+	reviewEvidenceCache map[string]reviewEvidence
+}
+
+type reviewEvidence struct {
+	Comparisons []domain.ReadingComparison
+	ReadingIDs  []string
 }
 
 type auditRepository interface {
