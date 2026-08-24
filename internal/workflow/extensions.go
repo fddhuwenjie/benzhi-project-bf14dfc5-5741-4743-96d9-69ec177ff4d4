@@ -64,6 +64,15 @@ type TrendResult struct {
 	Unclosed    int           `json:"unclosed"`
 }
 
+type workloadCacheKey struct {
+	IncidentID     string
+	Revision       int
+	RiskLevel      domain.RiskLevel
+	Assignee       string
+	DueAt          time.Time
+	ContinueReason string
+}
+
 func (s *Service) SearchArchive(f ArchiveFilter) ([]*domain.ArchiveSummary, error) {
 	var out []*domain.ArchiveSummary
 	for _, in := range s.Repo.List(domain.IncidentFilter{Status: domain.StatusClosed, AreaID: f.AreaID, RiskLevel: f.RiskLevel}) {
@@ -279,6 +288,18 @@ func sameRegistrationReadings(existing, candidate []domain.EnvironmentalReading)
 }
 
 func (s *Service) workloadSnapshot(current *domain.PreservationIncident, assignee string, due time.Time, reason string) domain.WorkloadSnapshot {
+	key := workloadCacheKey{
+		IncidentID: current.ID, Revision: current.Revision, RiskLevel: current.RiskLevel,
+		Assignee: strings.TrimSpace(assignee), DueAt: due, ContinueReason: reason,
+	}
+	s.workloadMu.RLock()
+	cached, ok := s.workloadCache[key]
+	s.workloadMu.RUnlock()
+	if ok {
+		cached.Conflicts = append([]domain.WorkloadEvent(nil), cached.Conflicts...)
+		return cached
+	}
+
 	now := s.now()
 	snapshot := domain.WorkloadSnapshot{Assignee: strings.TrimSpace(assignee), CapturedAt: now, ContinueReason: reason}
 	for _, candidate := range s.Repo.List(domain.IncidentFilter{}) {
@@ -296,6 +317,14 @@ func (s *Service) workloadSnapshot(current *domain.PreservationIncident, assigne
 		}
 		return snapshot.Conflicts[a].DueAt.Before(snapshot.Conflicts[b].DueAt)
 	})
+	s.workloadMu.Lock()
+	if s.workloadCache == nil || len(s.workloadCache) >= 256 {
+		s.workloadCache = make(map[workloadCacheKey]domain.WorkloadSnapshot)
+	}
+	stored := snapshot
+	stored.Conflicts = append([]domain.WorkloadEvent(nil), snapshot.Conflicts...)
+	s.workloadCache[key] = stored
+	s.workloadMu.Unlock()
 	return snapshot
 }
 

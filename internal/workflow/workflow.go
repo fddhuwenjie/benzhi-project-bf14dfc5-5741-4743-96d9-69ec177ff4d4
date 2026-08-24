@@ -9,13 +9,16 @@ import (
 	"museum-preservation/internal/domain"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Service struct {
-	Repo  domain.Repository
-	Rules assessment.RuleSet
-	Now   func() time.Time
+	Repo          domain.Repository
+	Rules         assessment.RuleSet
+	Now           func() time.Time
+	workloadMu    sync.RWMutex
+	workloadCache map[workloadCacheKey]domain.WorkloadSnapshot
 }
 
 type auditRepository interface {
