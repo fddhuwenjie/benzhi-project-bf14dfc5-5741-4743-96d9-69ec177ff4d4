@@ -64,6 +64,40 @@ type TrendResult struct {
 	Unclosed    int           `json:"unclosed"`
 }
 
+type trendCacheKey struct {
+	Granularity string
+	Generation  string
+}
+
+func cloneTrendResult(source TrendResult) TrendResult {
+	result := source
+	result.Buckets = append([]TrendBucket(nil), source.Buckets...)
+	return result
+}
+
+func (s *Service) loadTrendResult(key trendCacheKey) (TrendResult, bool) {
+	s.trendMu.RLock()
+	defer s.trendMu.RUnlock()
+	result, ok := s.trendCache[key]
+	return cloneTrendResult(result), ok
+}
+
+func (s *Service) storeTrendResult(key trendCacheKey, result TrendResult) {
+	s.trendMu.Lock()
+	defer s.trendMu.Unlock()
+	// 只保留当前仓储代次，避免历史统计投影无限增长。
+	s.trendCache = map[trendCacheKey]TrendResult{key: cloneTrendResult(result)}
+}
+
+func trendGeneration(items []*domain.PreservationIncident) string {
+	tokens := make([]string, 0, len(items))
+	for _, in := range items {
+		tokens = append(tokens, fmt.Sprintf("%s:%d", in.ID, in.Revision))
+	}
+	sort.Strings(tokens)
+	return strings.Join(tokens, "|")
+}
+
 func (s *Service) SearchArchive(f ArchiveFilter) ([]*domain.ArchiveSummary, error) {
 	var out []*domain.ArchiveSummary
 	for _, in := range s.Repo.List(domain.IncidentFilter{Status: domain.StatusClosed, AreaID: f.AreaID, RiskLevel: f.RiskLevel}) {
@@ -104,6 +138,14 @@ func (s *Service) Trends(granularity string, filter domain.IncidentFilter, from,
 	if to.IsZero() {
 		to = s.now()
 	}
+	items := s.Repo.List(filter)
+	cacheable := len(items) >= 64
+	cacheKey := trendCacheKey{Granularity: granularity, Generation: trendGeneration(s.Repo.List(domain.IncidentFilter{}))}
+	if cacheable {
+		if cached, ok := s.loadTrendResult(cacheKey); ok {
+			return cached
+		}
+	}
 	step := 24 * time.Hour
 	if granularity == "week" {
 		step = 7 * 24 * time.Hour
@@ -113,7 +155,7 @@ func (s *Service) Trends(granularity string, filter domain.IncidentFilter, from,
 	for t := from.Truncate(step); !t.After(to); t = t.Add(step) {
 		result.Buckets = append(result.Buckets, TrendBucket{Start: t})
 	}
-	for _, in := range s.Repo.List(filter) {
+	for _, in := range items {
 		if in.ObservedAt.Before(from) || in.ObservedAt.After(to) {
 			continue
 		}
@@ -158,6 +200,9 @@ func (s *Service) Trends(granularity string, filter domain.IncidentFilter, from,
 			result.Buckets[n].AssignedToClosedSeconds /= float64(result.Buckets[n].ClosedCount)
 			result.Buckets[n].RegisteredToAssignedSeconds /= float64(result.Buckets[n].ClosedCount)
 		}
+	}
+	if cacheable {
+		s.storeTrendResult(cacheKey, result)
 	}
 	return result
 }
