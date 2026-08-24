@@ -202,6 +202,28 @@ type ClosureStats struct {
 	Results              []ClosureMetric  `json:"results"`
 }
 
+type closureGroupKey struct {
+	area   string
+	metric string
+}
+
+func (s *Service) reuseClosureGroups(groups map[closureGroupKey][]*domain.PreservationIncident) map[closureGroupKey][]*domain.PreservationIncident {
+	total := 0
+	for _, incidents := range groups {
+		total += len(incidents)
+	}
+	if total < 64 {
+		return groups
+	}
+	if s.closureStatsGroups == nil {
+		s.closureStatsGroups = make(map[closureGroupKey][]*domain.PreservationIncident)
+	}
+	for key, incidents := range groups {
+		s.closureStatsGroups[key] = append(s.closureStatsGroups[key], incidents...)
+	}
+	return s.closureStatsGroups
+}
+
 func (s *Service) ClosureStats(from, to time.Time, area, metric string, risk domain.RiskLevel, windowDays int) (ClosureStats, error) {
 	if from.IsZero() || to.IsZero() || from.After(to) {
 		return ClosureStats{}, &domain.ValidationError{Field: "time_range", Message: "from 不得晚于 to 且不能为空"}
@@ -209,8 +231,7 @@ func (s *Service) ClosureStats(from, to time.Time, area, metric string, risk dom
 	if windowDays <= 0 || windowDays > 3650 {
 		return ClosureStats{}, &domain.ValidationError{Field: "recurrence_window", Message: "复发窗口必须为 1 到 3650 天"}
 	}
-	type key struct{ a, m string }
-	groups := map[key][]*domain.PreservationIncident{}
+	groups := map[closureGroupKey][]*domain.PreservationIncident{}
 	for _, in := range s.Repo.List(domain.IncidentFilter{AreaID: area, RiskLevel: risk}) {
 		if in.ObservedAt.Before(from) || in.ObservedAt.After(to) {
 			continue
@@ -225,9 +246,11 @@ func (s *Service) ClosureStats(from, to time.Time, area, metric string, risk dom
 			if metric != "" && metric != m {
 				continue
 			}
-			groups[key{in.AreaID, m}] = append(groups[key{in.AreaID, m}], in)
+			groupKey := closureGroupKey{area: in.AreaID, metric: m}
+			groups[groupKey] = append(groups[groupKey], in)
 		}
 	}
+	groups = s.reuseClosureGroups(groups)
 	out := ClosureStats{From: from, To: to, Area: area, Metric: metric, RiskLevel: risk, RecurrenceWindowDays: windowDays, GeneratedAt: s.now()}
 	for k, items := range groups {
 		sort.Slice(items, func(i, j int) bool { return items[i].ObservedAt.Before(items[j].ObservedAt) })
@@ -265,7 +288,7 @@ func (s *Service) ClosureStats(from, to time.Time, area, metric string, risk dom
 				rec++
 			}
 		}
-		m := ClosureMetric{Area: k.a, Metric: k.m, EventCount: len(items), RecurrenceCount: rec, AverageResponseSeconds: response / float64(maxInt(len(items), 1)), AverageRounds: rounds / float64(maxInt(len(items), 1)), ClosureRate: float64(closed) / float64(maxInt(len(items), 1)), OverdueRate: float64(overdue) / float64(maxInt(len(items), 1)), DataSufficient: totalEffects > 0}
+		m := ClosureMetric{Area: k.area, Metric: k.metric, EventCount: len(items), RecurrenceCount: rec, AverageResponseSeconds: response / float64(maxInt(len(items), 1)), AverageRounds: rounds / float64(maxInt(len(items), 1)), ClosureRate: float64(closed) / float64(maxInt(len(items), 1)), OverdueRate: float64(overdue) / float64(maxInt(len(items), 1)), DataSufficient: totalEffects > 0}
 		if totalEffects > 0 {
 			v := float64(stable) / float64(totalEffects)
 			m.StabilityRate = &v
