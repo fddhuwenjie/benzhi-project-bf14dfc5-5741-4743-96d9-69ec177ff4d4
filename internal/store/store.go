@@ -67,6 +67,9 @@ func Open(dir string) (*Store, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "snapshot.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
+			if _, logErr := os.Stat(filepath.Join(dir, "events.jsonl")); logErr == nil {
+				return nil, &domain.IntegrityError{Message: "快照缺失，无法恢复事件日志"}
+			}
 			return s, nil
 		}
 		return nil, err
