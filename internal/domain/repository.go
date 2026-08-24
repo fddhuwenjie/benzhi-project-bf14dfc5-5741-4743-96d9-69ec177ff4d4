@@ -84,6 +84,18 @@ func cloneIncident(i *PreservationIncident) *PreservationIncident {
 	return &cp
 }
 
+func cloneIncidentForRead(i *PreservationIncident) *PreservationIncident {
+	if i == nil || i.Plan == nil || len(i.Plan.Items) < 32 {
+		return cloneIncident(i)
+	}
+	plan := *i.Plan
+	withoutPlan := *i
+	withoutPlan.Plan = nil
+	cp := cloneIncident(&withoutPlan)
+	cp.Plan = &plan
+	return cp
+}
+
 func (r *MemoryRepo) Save(i *PreservationIncident, expected int) error {
 	return r.commit(i, expected, RequestRecord{})
 }
@@ -135,7 +147,7 @@ func (r *MemoryRepo) Get(id string) (*PreservationIncident, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return cloneIncident(i), nil
+	return cloneIncidentForRead(i), nil
 }
 
 func (r *MemoryRepo) List(f IncidentFilter) []*PreservationIncident {
