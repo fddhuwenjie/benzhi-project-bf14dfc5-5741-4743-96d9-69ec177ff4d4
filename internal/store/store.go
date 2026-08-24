@@ -18,6 +18,15 @@ type Store struct {
 	mu  sync.Mutex
 }
 
+type batchCommitError struct {
+	stage  string
+	detail string
+}
+
+func (e *batchCommitError) Error() string {
+	return fmt.Sprintf("批量提交在%s阶段失败: %s", e.stage, e.detail)
+}
+
 func (s *Store) AuditEvents(id string) ([]domain.IncidentEvent, error) {
 	snapshotEvents, err := s.MemoryRepo.AuditEvents(id)
 	if err != nil {
@@ -89,7 +98,7 @@ func (s *Store) CommitBatch(incidents []*domain.PreservationIncident, expected m
 	oldIncidents, oldRequests := s.MemoryRepo.Snapshot()
 	oldBatches := s.MemoryRepo.BatchSnapshot()
 	if err := s.MemoryRepo.CommitBatch(incidents, expected, rec); err != nil {
-		return err
+		return &batchCommitError{stage: "修订校验", detail: err.Error()}
 	}
 	currentIncidents, currentRequests := s.MemoryRepo.Snapshot()
 	if err := s.persist(currentIncidents, currentRequests); err != nil {
