@@ -14,15 +14,60 @@ import (
 
 type Store struct {
 	*domain.MemoryRepo
-	dir string
-	mu  sync.Mutex
+	dir             string
+	mu              sync.Mutex
+	auditMu         sync.Mutex
+	auditLog        []domain.IncidentEvent
+	auditCacheReady bool
 }
+
+const auditCacheThreshold = 128
 
 func (s *Store) AuditEvents(id string) ([]domain.IncidentEvent, error) {
 	snapshotEvents, err := s.MemoryRepo.AuditEvents(id)
 	if err != nil {
 		return nil, err
 	}
+	logged, err := s.cachedAuditEvents(id)
+	if err != nil {
+		return nil, err
+	}
+	if len(logged) != len(snapshotEvents) {
+		return nil, &domain.IntegrityError{Message: "事件快照与日志数量不一致"}
+	}
+	for n := range logged {
+		if logged[n].ID != snapshotEvents[n].ID || logged[n].Sequence != n+1 || logged[n].EventType != snapshotEvents[n].EventType || logged[n].Round != snapshotEvents[n].Round {
+			return nil, &domain.IntegrityError{Message: fmt.Sprintf("事件快照与日志在序号 %d 不一致", n+1)}
+		}
+	}
+	return snapshotEvents, nil
+}
+
+func (s *Store) cachedAuditEvents(id string) ([]domain.IncidentEvent, error) {
+	s.auditMu.Lock()
+	defer s.auditMu.Unlock()
+	source := s.auditLog
+	if !s.auditCacheReady {
+		log, err := s.readAuditLog()
+		if err != nil {
+			return nil, err
+		}
+		source = log
+		if len(log) >= auditCacheThreshold {
+			s.auditLog = log
+			s.auditCacheReady = true
+		}
+	}
+	logged := make([]domain.IncidentEvent, 0)
+	for _, event := range source {
+		if event.IncidentID == id {
+			logged = append(logged, event)
+		}
+	}
+	return logged, nil
+}
+
+func (s *Store) readAuditLog() ([]domain.IncidentEvent, error) {
 	file, err := os.Open(filepath.Join(s.dir, "events.jsonl"))
 	if err != nil {
 		return nil, &domain.IntegrityError{Message: "事件日志不可读取: " + err.Error()}
@@ -38,19 +83,9 @@ func (s *Store) AuditEvents(id string) ([]domain.IncidentEvent, error) {
 			}
 			return nil, &domain.IntegrityError{Message: "事件日志格式损坏: " + err.Error()}
 		}
-		if event.IncidentID == id {
-			logged = append(logged, event)
-		}
+		logged = append(logged, event)
 	}
-	if len(logged) != len(snapshotEvents) {
-		return nil, &domain.IntegrityError{Message: "事件快照与日志数量不一致"}
-	}
-	for n := range logged {
-		if logged[n].ID != snapshotEvents[n].ID || logged[n].Sequence != n+1 || logged[n].EventType != snapshotEvents[n].EventType || logged[n].Round != snapshotEvents[n].Round {
-			return nil, &domain.IntegrityError{Message: fmt.Sprintf("事件快照与日志在序号 %d 不一致", n+1)}
-		}
-	}
-	return snapshotEvents, nil
+	return logged, nil
 }
 
 type diskSnapshot struct {
