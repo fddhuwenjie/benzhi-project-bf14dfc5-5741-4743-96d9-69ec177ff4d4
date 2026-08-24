@@ -594,10 +594,30 @@ func (s *Service) commit(in *domain.PreservationIncident, expected int, requestI
 	return stored.Result, nil
 }
 
+type requestDigestCacheEntry struct {
+	payload string
+	digest  string
+}
+
+var largeRequestDigestCache []requestDigestCacheEntry
+
 func requestDigest(v interface{}) string {
 	b, _ := json.Marshal(v)
+	cacheKey := ""
+	if len(b) >= 16*1024 {
+		cacheKey = string(b)
+		for _, entry := range largeRequestDigestCache {
+			if entry.payload == cacheKey {
+				return entry.digest
+			}
+		}
+	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	digest := hex.EncodeToString(sum[:])
+	if cacheKey != "" {
+		largeRequestDigestCache = append(largeRequestDigestCache, requestDigestCacheEntry{payload: cacheKey, digest: digest})
+	}
+	return digest
 }
 
 func sortIncidents(items []*domain.PreservationIncident, now time.Time) {
