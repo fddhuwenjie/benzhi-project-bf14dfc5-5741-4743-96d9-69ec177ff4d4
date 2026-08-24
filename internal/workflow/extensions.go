@@ -37,6 +37,13 @@ type TimelineFilter struct {
 	Limit     int
 }
 
+type timelineCacheKey struct {
+	IncidentID string
+	Revision   int
+}
+
+const timelineCacheMinEvents = 32
+
 type ArchiveFilter struct {
 	Status    domain.Status
 	AreaID    string
@@ -360,8 +367,42 @@ func comparisonReadingIDs(comparisons []domain.ReadingComparison) []string {
 	return ids
 }
 
-func (s *Service) GetTimeline(id string, filter TimelineFilter) (*domain.PreservationIncident, error) {
+func (s *Service) timelineSource(id string) (*domain.PreservationIncident, error) {
+	current, err := s.Repo.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if len(current.Timeline) < timelineCacheMinEvents {
+		return s.Get(id)
+	}
+	key := timelineCacheKey{IncidentID: id, Revision: current.Revision}
+	s.timelineMu.Lock()
+	cached := s.timelineCache[key]
+	s.timelineMu.Unlock()
+	if cached != nil {
+		return cached, nil
+	}
 	in, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	key.Revision = in.Revision
+	s.timelineMu.Lock()
+	if s.timelineCache == nil {
+		s.timelineCache = make(map[timelineCacheKey]*domain.PreservationIncident)
+	}
+	for existing := range s.timelineCache {
+		if existing.IncidentID == id && existing != key {
+			delete(s.timelineCache, existing)
+		}
+	}
+	s.timelineCache[key] = in
+	s.timelineMu.Unlock()
+	return in, nil
+}
+
+func (s *Service) GetTimeline(id string, filter TimelineFilter) (*domain.PreservationIncident, error) {
+	in, err := s.timelineSource(id)
 	if err != nil {
 		return nil, err
 	}
