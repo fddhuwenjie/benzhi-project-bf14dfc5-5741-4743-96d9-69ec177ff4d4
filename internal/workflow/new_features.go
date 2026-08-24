@@ -11,6 +11,25 @@ import (
 	"strings"
 )
 
+var largeHandoverEventScratch []domain.HandoverEvent
+
+func handoverEventBuffer(size int) []domain.HandoverEvent {
+	if size < 64 {
+		return make([]domain.HandoverEvent, 0, size)
+	}
+	largeHandoverEventScratch = largeHandoverEventScratch[:0]
+	if cap(largeHandoverEventScratch) < size {
+		largeHandoverEventScratch = make([]domain.HandoverEvent, 0, size)
+	}
+	return largeHandoverEventScratch
+}
+
+func retainHandoverEventBuffer(size int, events []domain.HandoverEvent) {
+	if size >= 64 {
+		largeHandoverEventScratch = events
+	}
+}
+
 func (s *Service) SupplementAffectedItems(id string, revision int, items []domain.AffectedCollectionItem, note string, evidence []domain.EnvironmentalReading, actor, requestID string) (*domain.PreservationIncident, error) {
 	if err := requireRequestID(requestID); err != nil {
 		return nil, err
@@ -104,7 +123,7 @@ func (s *Service) HandoverSnapshot(filters domain.IncidentFilter, from, to, shif
 		return domain.HandoverSnapshot{}, &domain.ValidationError{Field: "handover", Message: "交班人与接班人必须不同且不能为空"}
 	}
 	incidents := s.Repo.List(filters)
-	events := make([]domain.HandoverEvent, 0)
+	events := handoverEventBuffer(len(incidents))
 	for _, in := range incidents {
 		if in.Status == domain.StatusClosed {
 			continue
@@ -126,6 +145,7 @@ func (s *Service) HandoverSnapshot(filters domain.IncidentFilter, from, to, shif
 		}
 		return events[a].DueAt.Before(events[b].DueAt)
 	})
+	retainHandoverEventBuffer(len(incidents), events)
 	snap := domain.HandoverSnapshot{ID: requestID, Shift: shift, From: from, To: to, Filters: filters, CapturedAt: s.now(), Events: events}
 	snap.Checksum = handoverChecksum(snap)
 	return snap, nil
