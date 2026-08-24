@@ -261,7 +261,7 @@ func (a *API) incidents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, preview, http.StatusOK)
 		return
 	}
-	in, err := a.Svc.Create(command)
+	in, err := a.Svc.CreateContext(r.Context(), command)
 	if err != nil {
 		a.writeErr(w, input.ID, err)
 		return

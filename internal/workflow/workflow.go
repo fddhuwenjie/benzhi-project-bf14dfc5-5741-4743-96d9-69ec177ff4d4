@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -69,6 +70,17 @@ func (s *Service) now() time.Time {
 }
 
 func (s *Service) Create(c CreateCommand) (*domain.PreservationIncident, error) {
+	return s.create(context.Background(), c)
+}
+
+func (s *Service) CreateContext(ctx context.Context, c CreateCommand) (*domain.PreservationIncident, error) {
+	return s.create(ctx, c)
+}
+
+func (s *Service) create(ctx context.Context, c CreateCommand) (*domain.PreservationIncident, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if c.SubmittedAt.IsZero() {
 		c.SubmittedAt = s.now()
 	}
