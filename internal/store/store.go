@@ -130,7 +130,7 @@ func (s *Store) commit(in *domain.PreservationIncident, expected int, rec domain
 func (s *Store) persist(incidents []*domain.PreservationIncident, requests []domain.RequestRecord) error {
 	sort.Slice(incidents, func(a, b int) bool { return incidents[a].ID < incidents[b].ID })
 	sort.Slice(requests, func(a, b int) bool { return requests[a].RequestID < requests[b].RequestID })
-	batches := s.MemoryRepo.BatchSnapshot()
+	batches := snapshotBatchRequests(s.MemoryRepo.BatchSnapshot())
 	sort.Slice(batches, func(a, b int) bool { return batches[a].RequestID < batches[b].RequestID })
 	b, err := json.MarshalIndent(diskSnapshot{Incidents: incidents, Requests: requests, BatchRequests: batches}, "", "  ")
 	if err != nil {
@@ -158,4 +158,14 @@ func (s *Store) persist(incidents []*domain.PreservationIncident, requests []dom
 		return err
 	}
 	return os.Rename(snapshotTmp, filepath.Join(s.dir, "snapshot.json"))
+}
+
+// 批次结果中的完整聚合可由事件快照重建，落盘时只保留幂等判定所需的元数据。
+func snapshotBatchRequests(records []domain.BatchRequestRecord) []domain.BatchRequestRecord {
+	compacted := make([]domain.BatchRequestRecord, len(records))
+	for n, record := range records {
+		record.Results = nil
+		compacted[n] = record
+	}
+	return compacted
 }
