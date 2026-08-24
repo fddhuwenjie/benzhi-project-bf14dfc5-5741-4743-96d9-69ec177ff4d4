@@ -142,6 +142,7 @@ func (r *MemoryRepo) List(f IncidentFilter) []*PreservationIncident {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]*PreservationIncident, 0)
+	compactProjection := len(r.incidents) >= 64
 	for _, i := range r.incidents {
 		if f.Status != "" && i.Status != f.Status || f.AreaID != "" && i.AreaID != f.AreaID || f.RiskLevel != "" && i.RiskLevel != f.RiskLevel {
 			continue
@@ -150,6 +151,11 @@ func (r *MemoryRepo) List(f IncidentFilter) []*PreservationIncident {
 			continue
 		}
 		if !f.MatchesAffectedItems(i.AffectedItems) {
+			continue
+		}
+		if compactProjection {
+			projection := *i
+			out = append(out, &projection)
 			continue
 		}
 		out = append(out, cloneIncident(i))
