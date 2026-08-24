@@ -191,7 +191,7 @@ func (s *Service) Preflight(command CreateCommand) PreflightResult {
 	}
 	rules := s.Rules
 	if command.ThresholdTemplateVersion != "" {
-		resolved, err := assessment.ResolveTemplate(rules, command.Sensitivity, command.ThresholdTemplateVersion)
+		resolved, err := s.resolveTemplate(command.Sensitivity, command.ThresholdTemplateVersion)
 		if err != nil {
 			issues = append(issues, domain.FieldIssue{Field: "threshold_template_version", Message: err.Error()})
 		} else {
@@ -204,6 +204,22 @@ func (s *Service) Preflight(command CreateCommand) PreflightResult {
 		issues = []domain.FieldIssue{}
 	}
 	return PreflightResult{Valid: len(issues) == 0, Errors: issues, NormalizedReadings: preview.Normalized, Intervals: preview.Intervals, RiskLevel: preview.Level, RiskBasis: preview.Basis, ResponseDue: preview.Response, ResponseDueText: preview.Response.String(), BaselinePairings: preview.Pairings, MissingBaselines: preview.MissingBaselines, RuleSetVersion: preview.RuleVersion, RuleHits: preview.RuleHits, AffectedItems: items, AffectedScope: scope, SensitivityTriggers: triggers}
+}
+
+func (s *Service) resolveTemplate(sensitivity, version string) (assessment.RuleSet, error) {
+	key := strings.TrimSpace(sensitivity) + "@" + strings.TrimSpace(version)
+	if cached, ok := s.templateCache[key]; ok {
+		return cached, nil
+	}
+	resolved, err := assessment.ResolveTemplate(s.Rules, sensitivity, version)
+	if err != nil {
+		return s.Rules, err
+	}
+	if s.templateCache == nil {
+		s.templateCache = make(map[string]assessment.RuleSet)
+	}
+	s.templateCache[key] = resolved
+	return resolved, nil
 }
 
 func (s *Service) sourceCandidates(command CreateCommand, normalized []domain.EnvironmentalReading) []domain.IncidentCandidate {

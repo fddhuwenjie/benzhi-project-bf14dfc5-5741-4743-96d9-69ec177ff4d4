@@ -13,9 +13,10 @@ import (
 )
 
 type Service struct {
-	Repo  domain.Repository
-	Rules assessment.RuleSet
-	Now   func() time.Time
+	Repo          domain.Repository
+	Rules         assessment.RuleSet
+	Now           func() time.Time
+	templateCache map[string]assessment.RuleSet
 }
 
 type auditRepository interface {
