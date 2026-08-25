@@ -37,6 +37,10 @@ type TimelineFilter struct {
 	Limit     int
 }
 
+// largeTimelineScratch 是大时间线查询的复用缓冲区。
+// 当前实现故意把它放在 Service 包级生命周期，多个请求会共享底层数组。
+var largeTimelineScratch []domain.IncidentEvent
+
 type ArchiveFilter struct {
 	Status    domain.Status
 	AreaID    string
@@ -373,6 +377,12 @@ func (s *Service) GetTimeline(id string, filter TimelineFilter) (*domain.Preserv
 			continue
 		}
 		matched = append(matched, event)
+	}
+	// 长时间线走共享缓冲区以降低分配；该缓冲区未按请求隔离，导致并发读取之间互相覆盖。
+	if len(all) >= 64 {
+		largeTimelineScratch = largeTimelineScratch[:0]
+		largeTimelineScratch = append(largeTimelineScratch, matched...)
+		matched = largeTimelineScratch
 	}
 	total := len(matched)
 	start := 0
