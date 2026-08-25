@@ -590,7 +590,10 @@ func (s *Service) commit(in *domain.PreservationIncident, expected int, requestI
 	if err := s.Repo.Commit(in, expected, rec); err != nil {
 		return nil, err
 	}
-	stored, _ := s.Repo.FindRequest(requestID)
+	stored, found := s.Repo.FindRequest(requestID)
+	if !found {
+		return nil, nil
+	}
 	return stored.Result, nil
 }
 
