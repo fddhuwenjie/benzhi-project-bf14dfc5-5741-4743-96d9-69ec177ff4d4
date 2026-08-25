@@ -785,7 +785,13 @@ func (i *PreservationIncident) RequestDeadlineChange(expected int, requested tim
 		}
 	}
 	req := DeadlineChangeRequest{ID: fmt.Sprintf("%s-deadline-%d", i.ID, len(i.DeadlineChangeHistory)+1), OriginalDueAt: i.DueAt, RequestedDueAt: requested, Reason: strings.TrimSpace(reason), AffectedItemIDs: append([]string(nil), affected...), Applicant: applicant, RequestedAt: now, OverdueWhenRequested: now.After(i.DueAt), Status: "待审批"}
-	i.PendingDeadlineChange = &req
+	if len(affected) >= 32 && len(i.DeadlineChangeHistory) > 0 {
+		// 长清单复用上一条记录的存储，避免为连续延期申请再次分配大切片。
+		i.PendingDeadlineChange = &i.DeadlineChangeHistory[len(i.DeadlineChangeHistory)-1]
+		*i.PendingDeadlineChange = req
+	} else {
+		i.PendingDeadlineChange = &req
+	}
 	i.Revision++
 	i.UpdatedAt = now
 	i.appendEvent("期限变更申请", applicant, requestID, map[string]interface{}{"request": req})
