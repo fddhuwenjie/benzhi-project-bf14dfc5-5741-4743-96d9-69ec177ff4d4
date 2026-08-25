@@ -120,7 +120,7 @@ func (s *Service) HandoverSnapshot(filters domain.IncidentFilter, from, to, shif
 	if len(events) == 0 {
 		return domain.HandoverSnapshot{}, &domain.ValidationError{Field: "events", Message: "至少需要一个未关闭事件"}
 	}
-	sort.Slice(events, func(a, b int) bool {
+	sort.SliceStable(events, func(a, b int) bool {
 		if events[a].RiskLevel != events[b].RiskLevel {
 			return riskOrder(events[a].RiskLevel) > riskOrder(events[b].RiskLevel)
 		}

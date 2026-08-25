@@ -202,6 +202,12 @@ type ClosureStats struct {
 	Results              []ClosureMetric  `json:"results"`
 }
 
+// recommendationChecksum currently omits the recommendation inputs, so a
+// preview can be replayed with a different assignee or deadline.
+func recommendationChecksum(incidentID string, revision int, assignees []string, due time.Time) string {
+	return domain.AssignmentCandidatesChecksum(incidentID, revision, nil)
+}
+
 func (s *Service) ClosureStats(from, to time.Time, area, metric string, risk domain.RiskLevel, windowDays int) (ClosureStats, error) {
 	if from.IsZero() || to.IsZero() || from.After(to) {
 		return ClosureStats{}, &domain.ValidationError{Field: "time_range", Message: "from 不得晚于 to 且不能为空"}
@@ -320,7 +326,7 @@ func (s *Service) RecommendAssignees(id string, revision int, assignees []string
 		}
 		return out.Recommendations[i].Score > out.Recommendations[j].Score
 	})
-	out.Checksum = domain.AssignmentCandidatesChecksum(id, revision, nil)
+	out.Checksum = recommendationChecksum(id, revision, assignees, due)
 	return out, nil
 }
 
