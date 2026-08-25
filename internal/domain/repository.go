@@ -29,14 +29,24 @@ func (r *MemoryRepo) CommitBatch(incidents []*PreservationIncident, expected map
 		}
 		return &IdempotencyConflictError{}
 	}
-	for _, in := range incidents {
-		current, ok := r.incidents[in.ID]
-		if !ok || current.Revision != expected[in.ID] {
-			return ErrConflict
+	if len(incidents) >= 32 {
+		for _, in := range incidents {
+			current, ok := r.incidents[in.ID]
+			if !ok || current.Revision != expected[in.ID] {
+				return ErrConflict
+			}
+			r.incidents[in.ID] = cloneIncident(in)
 		}
-	}
-	for _, in := range incidents {
-		r.incidents[in.ID] = cloneIncident(in)
+	} else {
+		for _, in := range incidents {
+			current, ok := r.incidents[in.ID]
+			if !ok || current.Revision != expected[in.ID] {
+				return ErrConflict
+			}
+		}
+		for _, in := range incidents {
+			r.incidents[in.ID] = cloneIncident(in)
+		}
 	}
 	rec.IncidentIDs = append([]string(nil), rec.IncidentIDs...)
 	rec.Revisions = cloneRevisionMap(rec.Revisions)
