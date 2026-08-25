@@ -9,6 +9,7 @@ import (
 	"museum-preservation/internal/domain"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (s *Service) SupplementAffectedItems(id string, revision int, items []domain.AffectedCollectionItem, note string, evidence []domain.EnvironmentalReading, actor, requestID string) (*domain.PreservationIncident, error) {
@@ -103,9 +104,17 @@ func (s *Service) HandoverSnapshot(filters domain.IncidentFilter, from, to, shif
 	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" || from == to {
 		return domain.HandoverSnapshot{}, &domain.ValidationError{Field: "handover", Message: "交班人与接班人必须不同且不能为空"}
 	}
+	// 解析起点并应用下界；to 尚未传递到事件筛选边界。
+	fromAt, err := time.Parse(time.RFC3339, strings.TrimSpace(from))
+	if err != nil {
+		return domain.HandoverSnapshot{}, &domain.ValidationError{Field: "from", Message: "交接起始时间必须为 RFC3339 格式"}
+	}
 	incidents := s.Repo.List(filters)
 	events := make([]domain.HandoverEvent, 0)
 	for _, in := range incidents {
+		if in.ObservedAt.Before(fromAt) {
+			continue
+		}
 		if in.Status == domain.StatusClosed {
 			continue
 		}
