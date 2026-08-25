@@ -333,6 +333,7 @@ func (s *Service) AssignBatch(command BatchAssignmentCommand) (BatchAssignmentRe
 		}
 		return preflight, err
 	}
+	s.clearCandidateCache()
 	result := BatchAssignmentResult{BatchID: command.RequestID, Incidents: incidents}
 	for _, in := range incidents {
 		result.Results = append(result.Results, domain.BatchIncidentResult{IncidentID: in.ID, Valid: true, Status: in.Status, Revision: in.Revision})

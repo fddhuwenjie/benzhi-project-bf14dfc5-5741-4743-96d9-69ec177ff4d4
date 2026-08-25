@@ -207,9 +207,32 @@ func (s *Service) Preflight(command CreateCommand) PreflightResult {
 }
 
 func (s *Service) sourceCandidates(command CreateCommand, normalized []domain.EnvironmentalReading) []domain.IncidentCandidate {
+	incidents := s.Repo.List(domain.IncidentFilter{})
+	if len(incidents) < 64 {
+		return candidateMatches(command, normalized, incidents)
+	}
+
+	s.candidateMu.Lock()
+	defer s.candidateMu.Unlock()
+	cacheKey := strings.TrimSpace(command.AreaID)
+	if cached, ok := s.candidateCache[cacheKey]; ok {
+		return append([]domain.IncidentCandidate(nil), cached...)
+	}
+	// Re-read while holding candidateMu so a concurrent successful commit can
+	// invalidate any result computed before its repository write.
+	incidents = s.Repo.List(domain.IncidentFilter{})
+	candidates := candidateMatches(command, normalized, incidents)
+	if s.candidateCache == nil {
+		s.candidateCache = map[string][]domain.IncidentCandidate{}
+	}
+	s.candidateCache[cacheKey] = append([]domain.IncidentCandidate(nil), candidates...)
+	return candidates
+}
+
+func candidateMatches(command CreateCommand, normalized []domain.EnvironmentalReading, incidents []*domain.PreservationIncident) []domain.IncidentCandidate {
 	newMetrics := abnormalMetricSet(normalized)
 	var candidates []domain.IncidentCandidate
-	for _, existing := range s.Repo.List(domain.IncidentFilter{}) {
+	for _, existing := range incidents {
 		if existing.ID == command.ID || existing.AreaID != strings.TrimSpace(command.AreaID) {
 			continue
 		}

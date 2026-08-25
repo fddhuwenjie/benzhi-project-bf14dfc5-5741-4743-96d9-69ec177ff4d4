@@ -9,13 +9,16 @@ import (
 	"museum-preservation/internal/domain"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Service struct {
-	Repo  domain.Repository
-	Rules assessment.RuleSet
-	Now   func() time.Time
+	Repo           domain.Repository
+	Rules          assessment.RuleSet
+	Now            func() time.Time
+	candidateMu    sync.Mutex
+	candidateCache map[string][]domain.IncidentCandidate
 }
 
 type auditRepository interface {
@@ -152,6 +155,7 @@ func (s *Service) Create(c CreateCommand) (*domain.PreservationIncident, error) 
 	if err = s.Repo.Commit(in, 0, rec); err != nil {
 		return nil, err
 	}
+	s.clearCandidateCache()
 	stored, _ := s.Repo.FindRequest(c.RequestID)
 	return stored.Result, nil
 }
@@ -590,8 +594,15 @@ func (s *Service) commit(in *domain.PreservationIncident, expected int, requestI
 	if err := s.Repo.Commit(in, expected, rec); err != nil {
 		return nil, err
 	}
+	s.clearCandidateCache()
 	stored, _ := s.Repo.FindRequest(requestID)
 	return stored.Result, nil
+}
+
+func (s *Service) clearCandidateCache() {
+	s.candidateMu.Lock()
+	s.candidateCache = nil
+	s.candidateMu.Unlock()
 }
 
 func requestDigest(v interface{}) string {

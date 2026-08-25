@@ -182,6 +182,7 @@ func (s *Service) SignHandover(snap domain.HandoverSnapshot, requestID, from, to
 		if err := s.Repo.Commit(in, item.Revision, domain.RequestRecord{RequestID: requestID + "/" + item.IncidentID, Operation: "handover-sign", IncidentID: in.ID, Digest: snap.Checksum, SuccessRevision: in.Revision, Result: in}); err != nil {
 			return domain.HandoverSnapshot{}, err
 		}
+		s.clearCandidateCache()
 	}
 	return snap, nil
 }
