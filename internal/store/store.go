@@ -14,14 +14,23 @@ import (
 
 type Store struct {
 	*domain.MemoryRepo
-	dir string
-	mu  sync.Mutex
+	dir       string
+	mu        sync.Mutex
+	auditHook func()
+}
+
+// SetAuditHookForTest installs a deterministic audit read barrier for private concurrency reproductions.
+func (s *Store) SetAuditHookForTest(hook func()) {
+	s.auditHook = hook
 }
 
 func (s *Store) AuditEvents(id string) ([]domain.IncidentEvent, error) {
 	snapshotEvents, err := s.MemoryRepo.AuditEvents(id)
 	if err != nil {
 		return nil, err
+	}
+	if s.auditHook != nil {
+		s.auditHook()
 	}
 	file, err := os.Open(filepath.Join(s.dir, "events.jsonl"))
 	if err != nil {
