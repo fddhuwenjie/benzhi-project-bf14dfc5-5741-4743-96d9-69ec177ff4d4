@@ -9,6 +9,7 @@ import (
 	"museum-preservation/internal/domain"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,9 @@ type Service struct {
 	Repo  domain.Repository
 	Rules assessment.RuleSet
 	Now   func() time.Time
+
+	archiveMu    sync.Mutex
+	archiveCache map[string][]*domain.ArchiveSummary
 }
 
 type auditRepository interface {

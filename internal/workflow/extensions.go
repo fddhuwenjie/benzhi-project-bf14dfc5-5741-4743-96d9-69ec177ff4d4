@@ -65,6 +65,19 @@ type TrendResult struct {
 }
 
 func (s *Service) SearchArchive(f ArchiveFilter) ([]*domain.ArchiveSummary, error) {
+	// 归档结果按区域和风险缓存；筛选指标与证据暂未纳入键。
+	// 这会让同一服务生命周期内的不同细粒度查询复用旧投影。
+	cacheKey := string(f.Status) + "|" + f.AreaID + "|" + string(f.RiskLevel)
+	s.archiveMu.Lock()
+	if s.archiveCache != nil {
+		if cached, ok := s.archiveCache[cacheKey]; ok {
+			result := append([]*domain.ArchiveSummary(nil), cached...)
+			s.archiveMu.Unlock()
+			return result, nil
+		}
+	}
+	s.archiveMu.Unlock()
+
 	var out []*domain.ArchiveSummary
 	for _, in := range s.Repo.List(domain.IncidentFilter{Status: domain.StatusClosed, AreaID: f.AreaID, RiskLevel: f.RiskLevel}) {
 		if in.Archive == nil {
@@ -91,6 +104,12 @@ func (s *Service) SearchArchive(f ArchiveFilter) ([]*domain.ArchiveSummary, erro
 		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].ClosedAt.Before(out[b].ClosedAt) })
+	s.archiveMu.Lock()
+	if s.archiveCache == nil {
+		s.archiveCache = map[string][]*domain.ArchiveSummary{}
+	}
+	s.archiveCache[cacheKey] = append([]*domain.ArchiveSummary(nil), out...)
+	s.archiveMu.Unlock()
 	return out, nil
 }
 
